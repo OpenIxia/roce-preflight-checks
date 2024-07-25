@@ -1,4 +1,4 @@
-"""Keysight Collective Communication Benchmarks
+"""RoCEv2 Preflight Checks
 
 Copyright (C) Keysight Technologies, Inc - All Rights Reserved.
 
@@ -491,7 +491,7 @@ class KCCB:
         )
         parser.add_argument(
             "--ixnetwork-session-name",
-            help="Name for the IxNetwork session (e.g. your username, default is KCCB)",
+            help="Name for the IxNetwork session (e.g. your username, default is RoCEv2)",
             required=False,
         )
         parser.add_argument(
@@ -1735,55 +1735,14 @@ class KCCB:
             if self._precheckSetupTasks['Configure Interfaces']['result'] == 'failed':
                 raise Exception (f'Configure interfaces failed. Skipping ping mesh.')
 
-        # Get all endpoint host IP addresses
-        self._logger.info('Pinging Endpoints to check reachability')
-        endpointIPAddresses = []
-        failures = []
-        for i in range(len(self._config.hosts)):
-            host = self._config.hosts[i]
-            endpointIPAddresses.append(host.address)
+            # Get all endpoint host IP addresses
+            self._logger.info('Pinging Endpoints to check reachability')
+            endpointIPAddresses = []
+            failures = []
+            for i in range(len(self._config.hosts)):
+                host = self._config.hosts[i]
+                endpointIPAddresses.append(host.address)
 
-        pingException = False
-        pingFailures = ''
-
-        for i in range(len(self._config.hosts)):
-            host = self._config.hosts[i]
-            host_name = host.name
-            hostSrcIp = host.address
-            if self._ip_type == 'ipv4':
-                host_ipObj = self._ixnetwork.Topology.find(Name=host_name).DeviceGroup.find().Ethernet.find().Ipv4.find()
-            if self._ip_type == 'ipv6':
-                host_ipObj = self._ixnetwork.Topology.find(Name=host_name).DeviceGroup.find().Ethernet.find().Ipv6.find()
-
-            for endpointIPAddress in endpointIPAddresses:
-                if endpointIPAddress == hostSrcIp:
-                    continue
-
-                result = host_ipObj.SendPing(DestIP=endpointIPAddress)
-                self._logger.info(f'PingEndpoints: FrameSize:64B srcHost:{host_name}  srcIp:{hostSrcIp}  destIp:{endpointIPAddress}  result:{result[0]["arg2"]}')
-                if result[0]['arg2'] is False:
-                    pingFailures += f'{hostSrcIp} -> {endpointIPAddress}\n'
-                    pingException = True
-
-                # else:
-                #     # Ping with jumbo size frames if 64Byte ping works
-                #     result = host_ipObj.SendPingWithCountAndPayload(DestIP=endpointIPAddress, PingCount=3, PingInterval=1, PayloadSize=1472)
-                #     self._logger.info(f'PingEndpoints: FrameSize:1472B  srcHost:{host_name}  srcIp:{hostSrcIp}  destIp:{endpointIPAddress}  result:{result[0]["arg2"]}')
-                #     if result[0]['arg2'] is False:
-                #         pingFailures += f'{hostSrcIp} -> {endpointIPAddress}\n'
-                #         pingException = True
-
-        if pingException:
-            self._precheckSetupTasks['Ping Mesh'].update({'result': 'Failed',
-                                                          'errorMsg': self.wrapText(pingFailures, width=300)})
-            raise Exception('Pinging endpoints with 64 Bytes frames failed')
-        else:
-            self._precheckSetupTasks['Ping Mesh'].update({'result': 'Passed'})
-
-        '''
-        # Ping with jumbo frames
-        if pingException is False:
-            # Ping endpoints using jumbo size frames
             pingException = False
             pingFailures = ''
 
@@ -1800,19 +1759,60 @@ class KCCB:
                     if endpointIPAddress == hostSrcIp:
                         continue
 
-                    result = host_ipObj.SendPingWithCountAndPayload(DestIP=endpointIPAddress, PingCount=3, PingInterval=1, PayloadSize=1472)
-                    self._logger.info(f'PingEndpoints: FrameSize:1472  srcHost:{host_name}  srcIp:{hostSrcIp}  destIp:{endpointIPAddress}  result:{result[0]["arg2"]}')
+                    result = host_ipObj.SendPing(DestIP=endpointIPAddress)
+                    self._logger.info(f'PingEndpoints: FrameSize:64B srcHost:{host_name}  srcIp:{hostSrcIp}  destIp:{endpointIPAddress}  result:{result[0]["arg2"]}')
                     if result[0]['arg2'] is False:
                         pingFailures += f'{hostSrcIp} -> {endpointIPAddress}\n'
                         pingException = True
 
+                    # else:
+                    #     # Ping with jumbo size frames if 64Byte ping works
+                    #     result = host_ipObj.SendPingWithCountAndPayload(DestIP=endpointIPAddress, PingCount=3, PingInterval=1, PayloadSize=1472)
+                    #     self._logger.info(f'PingEndpoints: FrameSize:1472B  srcHost:{host_name}  srcIp:{hostSrcIp}  destIp:{endpointIPAddress}  result:{result[0]["arg2"]}')
+                    #     if result[0]['arg2'] is False:
+                    #         pingFailures += f'{hostSrcIp} -> {endpointIPAddress}\n'
+                    #         pingException = True
+
             if pingException:
                 self._precheckSetupTasks['Ping Mesh'].update({'result': 'Failed',
-                                                                        'errorMsg': self.wrapText(pingFailures, width=300)})
-                raise Exception('Pinging endpoints with jumbo size frames failed')
+                                                            'errorMsg': self.wrapText(pingFailures, width=300)})
+                raise Exception('Pinging endpoints with 64 Bytes frames failed')
             else:
                 self._precheckSetupTasks['Ping Mesh'].update({'result': 'Passed'})
-        '''
+
+            '''
+            # Ping with jumbo frames
+            if pingException is False:
+                # Ping endpoints using jumbo size frames
+                pingException = False
+                pingFailures = ''
+
+                for i in range(len(self._config.hosts)):
+                    host = self._config.hosts[i]
+                    host_name = host.name
+                    hostSrcIp = host.address
+                    if self._ip_type == 'ipv4':
+                        host_ipObj = self._ixnetwork.Topology.find(Name=host_name).DeviceGroup.find().Ethernet.find().Ipv4.find()
+                    if self._ip_type == 'ipv6':
+                        host_ipObj = self._ixnetwork.Topology.find(Name=host_name).DeviceGroup.find().Ethernet.find().Ipv6.find()
+
+                    for endpointIPAddress in endpointIPAddresses:
+                        if endpointIPAddress == hostSrcIp:
+                            continue
+
+                        result = host_ipObj.SendPingWithCountAndPayload(DestIP=endpointIPAddress, PingCount=3, PingInterval=1, PayloadSize=1472)
+                        self._logger.info(f'PingEndpoints: FrameSize:1472  srcHost:{host_name}  srcIp:{hostSrcIp}  destIp:{endpointIPAddress}  result:{result[0]["arg2"]}')
+                        if result[0]['arg2'] is False:
+                            pingFailures += f'{hostSrcIp} -> {endpointIPAddress}\n'
+                            pingException = True
+
+                if pingException:
+                    self._precheckSetupTasks['Ping Mesh'].update({'result': 'Failed',
+                                                                            'errorMsg': self.wrapText(pingFailures, width=300)})
+                    raise Exception('Pinging endpoints with jumbo size frames failed')
+                else:
+                    self._precheckSetupTasks['Ping Mesh'].update({'result': 'Passed'})
+            '''
 
     def _reconfigure_rocev2_bufferSize(self):
         '''
