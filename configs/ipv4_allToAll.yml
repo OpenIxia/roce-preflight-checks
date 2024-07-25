@@ -1,0 +1,395 @@
+# There are 3 different ways to define RoCEv2 Queue Pair values:
+# 1> User define custom QP values:
+#     - Scroll down to test_profiles and set queue_pairs_per_flow with an integer greater than 0
+#     - Setting custom QP for all remoteEndpoint has to be the same amount in square brackets.
+#       Meaning if you set a remoteEndpoint with 2 queuePairId: [101, 102], then
+#       all endpoints must have the same amount of Queue Pairs.
+#     - Create custom udpSourcePort and dscp in square bracket and align the values with the QP list index.
+#     - If you want to configure the same udp src port or same dscp value for all queue pair IDs,
+#       then instead of using a list in square brackets, just set the value as single value without square brackets.
+#
+# 2> User define total QPs per flow:
+#     - Scroll down to test_profiles and set queue_pairs_per_flow to an integer greater than 0
+#     - Subsequently, set the buffer size
+#
+# 3> Automatically assign one QP per endpoint
+#     - Scroll down to test_profiles and set queue_pairs_per_flow = 0
+#     - Command out below queuePairValues, udpSourcePort, dscp
+
+# prechecks:
+#    license_check: true
+#    check_connectivity: true
+#    setup_ports: true
+#    setup_layer1: true
+#    check_link_state: true
+#    configure_interfaces: true
+#    arp_gateways: true
+#    ping_mesh: true
+#    apply_rocev2_traffic: true
+
+#    # If pfc_incast=False, set test_profiles.typeOfTest=all_to_all
+#    # If pfc_incast=True, set test_profiles.typeOfTest=incast
+#    pfc_incast: false
+
+chassis:
+  chassis_chain: [10.36.75.23]
+  primary_chassis_ip: 10.36.75.23
+  # port_mode options: nrz | pam4
+  port_mode: pam4
+
+hosts:
+- address: 71.1.1.2
+  gateway: 71.1.1.1
+  location: 10.36.75.23/1
+  name: Host0.1
+  prefix: 24
+  # Deprecated: queue_pair_ids: [[1,2,3], [4,5,6], [7,8,9], [10,11,12], [13,14,15], [16,17,18], [19,20,21]]
+
+  # Setting custom QP for all remoteEndpoint has to be the same amount in square brackets.
+  # Meaning if you set a remoteEndpoint with 2 queuePairId: [101, 102], then
+  # all endpoints must have the same amount of Queue Pairs.
+  # Create custom udpSourcePort and dscp in square bracket and align the values with the QP list index.
+  # If you want to configure the same udp src port or same dscp value for all queue pair IDs,
+  # then instead of using a list in square brackets, just set the value as single value without square brackets.
+  rocev2:
+    - remoteEndpoint: Host0.2
+      queuePairValues: [101, 102]
+      udpSourcePort: [1001, 1002]
+      dscp: [1, 2]
+    - remoteEndpoint: Host0.3
+      queuePairValues: [103, 104]
+      udpSourcePort: [1003, 1114]
+      dscp: [3, 4]
+    - remoteEndpoint: Host0.4
+      queuePairValues: [105, 106]
+      udpSourcePort: [1005, 1116]
+      dscp: [5, 6]
+    - remoteEndpoint: Host1.1
+      queuePairValues: [107, 108]
+      udpSourcePort: [1007, 1118]
+      dscp: [6, 1]
+    - remoteEndpoint: Host1.2
+      queuePairValues: [109, 110]
+      udpSourcePort: [1009, 1120]
+      dscp: [2, 3]
+    - remoteEndpoint: Host1.3
+      queuePairValues: [111, 112]
+      udpSourcePort: [1021, 1122]
+      dscp: [4, 5]
+    - remoteEndpoint: Host1.4
+      queuePairValues: [113, 114]
+      udpSourcePort: [1023, 1124]
+      dscp: [6, 5]
+
+- address: 71.2.1.2
+  gateway: 71.2.1.1
+  location: 10.36.75.23/2
+  name: Host0.2
+  prefix: 24
+  #queue_pair_ids: [[22,23,24], [25,26,27], [28,29,30], [31,32,33], [34,35,36], [37,38,49], [40,41,42]]
+  rocev2:
+    - remoteEndpoint: Host0.1
+      queuePairValues: [215, 202]
+      udpSourcePort: [2221, 2222]
+    - remoteEndpoint: Host0.3
+      queuePairValues: [203, 204]
+      udpSourcePort: [2221, 2222]
+    - remoteEndpoint: Host0.4
+      queuePairValues: [205, 206]
+      udpSourcePort: [2221, 2222]
+    - remoteEndpoint: Host1.1
+      queuePairValues: [207, 208]
+      udpSourcePort: [2221, 2222]
+    - remoteEndpoint: Host1.2
+      queuePairValues: [209, 210]
+      udpSourcePort: [2221, 2222]
+    - remoteEndpoint: Host1.3
+      queuePairValues: [211, 212]
+      udpSourcePort: [2221, 2222]
+    - remoteEndpoint: Host1.4
+      queuePairValues: [213, 214]
+      udpSourcePort: [2221, 2222]
+
+- address: 71.3.1.2
+  gateway: 71.3.1.1
+  location: 10.36.75.23/3
+  name: Host0.3
+  prefix: 24
+  #queue_pair_ids: [[43,44,45], [46,47,48], [49,50,51], [52,53,54], [55,56,57], [58,59,60], [61,62,63]]
+  rocev2:
+    - remoteEndpoint: Host0.1
+      queuePairValues: [315, 302]
+      udpSourcePort: [3331, 3332]
+    - remoteEndpoint: Host0.2
+      queuePairValues: [303, 304]
+      udpSourcePort: [3331, 3332]
+    - remoteEndpoint: Host0.4
+      queuePairValues: [305, 306]
+      udpSourcePort: [3331, 3332]
+    - remoteEndpoint: Host1.1
+      queuePairValues: [307, 308]
+      udpSourcePort: [3331, 3332]
+    - remoteEndpoint: Host1.2
+      queuePairValues: [309, 310]
+      udpSourcePort: [3331, 3332]
+    - remoteEndpoint: Host1.3
+      queuePairValues: [311, 312]
+      udpSourcePort: [3331, 3332]
+    - remoteEndpoint: Host1.4
+      queuePairValues: [313, 314]
+      udpSourcePort: [3331, 3332]
+
+- address: 71.4.1.2
+  gateway: 71.4.1.1
+  location: 10.36.75.23/4
+  name: Host0.4
+  prefix: 24
+  #queue_pair_ids: [[63,64,65], [66,67,68], [69,70,71], [72,73,74], [75,76,77], [78,79,80], [81,82,83]]
+  rocev2:
+    - remoteEndpoint: Host0.1
+      queuePairValues: [401, 402]
+      udpSourcePort: [4441, 4442]
+    - remoteEndpoint: Host0.2
+      queuePairValues: [403, 404]
+      udpSourcePort: [4441, 4442]
+    - remoteEndpoint: Host0.3
+      queuePairValues: [405, 406]
+      udpSourcePort: [4441, 4442]
+    - remoteEndpoint: Host1.1
+      queuePairValues: [407, 408]
+      udpSourcePort: [4441, 4442]
+    - remoteEndpoint: Host1.2
+      queuePairValues: [409, 410]
+      udpSourcePort: [4441, 4442]
+    - remoteEndpoint: Host1.3
+      queuePairValues: [411, 412]
+      udpSourcePort: [4441, 4442]
+    - remoteEndpoint: Host1.4
+      queuePairValues: [413, 414]
+      udpSourcePort: [4441, 4442]
+
+- address: 71.5.1.2
+  gateway: 71.5.1.1
+  location: 10.36.75.23/5
+  name: Host1.1
+  prefix: 24
+  #queue_pair_ids: [[84,85,86], [87,88,89], [90,91,92], [93,94,95], [96,97,98], [99,100,101], [102,103,104]]
+  rocev2:
+    - remoteEndpoint: Host0.1
+      queuePairValues: [501, 502]
+      udpSourcePort: [5551, 5552]
+    - remoteEndpoint: Host0.2
+      queuePairValues: [503, 504]
+      udpSourcePort: [5551, 5552]
+    - remoteEndpoint: Host0.3
+      queuePairValues: [505, 506]
+      udpSourcePort: [5551, 5552]
+    - remoteEndpoint: Host0.4
+      queuePairValues: [507, 508]
+      udpSourcePort: [5551, 5552]
+    - remoteEndpoint: Host1.2
+      queuePairValues: [509, 510]
+      udpSourcePort: [5551, 5552]
+    - remoteEndpoint: Host1.3
+      queuePairValues: [511, 512]
+      udpSourcePort: [5551, 5552]
+    - remoteEndpoint: Host1.4
+      queuePairValues: [513, 514]
+      udpSourcePort: [5551, 5552]
+
+- address: 71.6.1.2
+  gateway: 71.6.1.1
+  location: 10.36.75.23/6
+  name: Host1.2
+  prefix: 24
+  #queue_pair_ids: [[105,106,107], [108,109,110], [111,112,113], [114,115,116], [117,118,119], [120,121,122], [123,124,125]]
+  rocev2:
+    - remoteEndpoint: Host0.1
+      queuePairValues: [601, 602]
+      udpSourcePort: [6661, 6662]
+    - remoteEndpoint: Host0.2
+      queuePairValues: [603, 604]
+      udpSourcePort: [6661, 6662]
+    - remoteEndpoint: Host0.3
+      queuePairValues: [605, 606]
+      udpSourcePort: [6661, 6662]
+    - remoteEndpoint: Host0.4
+      queuePairValues: [607, 608]
+      udpSourcePort: [6661, 6662]
+    - remoteEndpoint: Host1.1
+      queuePairValues: [609, 610]
+      udpSourcePort: [6661, 6662]
+    - remoteEndpoint: Host1.3
+      queuePairValues: [611, 612]
+      udpSourcePort: [6661, 6662]
+    - remoteEndpoint: Host1.4
+      queuePairValues: [613, 614]
+      udpSourcePort: [6661, 6662]
+
+- address: 71.7.1.2
+  gateway: 71.7.1.1
+  location: 10.36.75.23/7
+  name: Host1.3
+  prefix: 24
+  #queue_pair_ids: [[126,127,128], [129,130,131], [132,133,134], [135,136,137], [138,139,140], [141,142,143], [144,145,146]]
+  rocev2:
+    - remoteEndpoint: Host0.1
+      queuePairValues: [701, 702]
+      udpSourcePort: [7771, 7772]
+    - remoteEndpoint: Host0.2
+      queuePairValues: [703, 704]
+      udpSourcePort: [7771, 7772]
+    - remoteEndpoint: Host0.3
+      queuePairValues: [705, 706]
+      udpSourcePort: [7771, 7772]
+    - remoteEndpoint: Host0.4
+      queuePairValues: [707, 708]
+      udpSourcePort: [7771, 7772]
+    - remoteEndpoint: Host1.1
+      queuePairValues: [709, 710]
+      udpSourcePort: [7771, 7772]
+    - remoteEndpoint: Host1.2
+      queuePairValues: [711, 712]
+      udpSourcePort: [7771, 7772]
+    - remoteEndpoint: Host1.4
+      queuePairValues: [713, 714]
+      udpSourcePort: [7771, 7772]
+
+- address: 71.8.1.2
+  gateway: 71.8.1.1
+  location: 10.36.75.23/8
+  name: Host1.4
+  prefix: 24
+  #queue_pair_ids: [[147,14149], [150,151,152], [153,154,155], [156,157,158], [159,160,161], [162,163,164], [165,166,167]]
+  rocev2:
+    - remoteEndpoint: Host0.1
+      queuePairValues: [801, 802]
+      udpSourcePort: [8881, 8882]
+    - remoteEndpoint: Host0.2
+      queuePairValues: [803, 804]
+      udpSourcePort: [8881, 8882]
+    - remoteEndpoint: Host0.3
+      queuePairValues: [805, 806]
+      udpSourcePort: [8881, 8882]
+    - remoteEndpoint: Host0.4
+      queuePairValues: [807, 808]
+      udpSourcePort: [8881, 8882]
+    - remoteEndpoint: Host1.1
+      queuePairValues: [809, 810]
+      udpSourcePort: [8881, 8882]
+    - remoteEndpoint: Host1.2
+      queuePairValues: [811, 812]
+      udpSourcePort: [8881, 8882]
+    - remoteEndpoint: Host1.3
+      queuePairValues: [813, 814]
+      udpSourcePort: [8881, 8882]
+
+layer1_profiles:
+  - name: layer1
+    auto_negotiate: false
+    ieee_defaults: false
+    link_speed: SPEED_400G
+    link_training: false
+    rs_fec: true
+    flow_control:
+      ieee_802_1qbb:
+        pfc_class_1: 2
+    hosts:
+     - Host0.1
+     - Host0.2
+     - Host0.3
+     - Host0.4
+     - Host1.1
+     - Host1.2
+     - Host1.3
+     - Host1.4
+
+# Notes: step 2 (2147483648)
+test_profiles:
+  - name: 1GB_all_to_all
+    # all_to_all | incast (incast is for PFC precheck)
+    typeOfTest: all_to_all
+    start: 1073741824
+    end: 1073741824
+    step: 2
+    tos: 225
+    enableDcqcn: true
+    ethernet_mtu:  8192
+    # Set queue_pairs_per_flow to 0 (zero) to disable this feature
+    queue_pairs_per_flow: 0
+    bufferSize: 131072
+    hosts:
+      - Host0.1
+      - Host0.2
+      - Host0.3
+      - Host0.4
+      - Host1.1
+      - Host1.2
+      - Host1.3
+      - Host1.4
+
+    skip_flows:
+      # Example
+      #- [Host0.1, Host1.4]
+      - []
+
+  - name: 10GB_all_to_all
+    typeOfTest: all_to_all
+    start: 10737418240
+    end: 10737418240
+    step: 2
+    tos: 225
+    enableDcqcn: true
+    ethernet_mtu: 8192
+    queue_pairs_per_flow: 0
+    bufferSize: 131072
+    hosts:
+      - Host0.1
+      - Host0.2
+      - Host0.3
+      - Host0.4
+      - Host1.1
+      - Host1.2
+      - Host1.3
+      - Host1.4
+    skip_flows:
+      - []
+
+  # 128GB: 1342177280
+  - name: 128GB_all_to_all
+    typeOfTest: all_to_all
+    start: 137438953472
+    end: 137438953472
+    step: 2
+    tos: 225
+    enableDcqcn: true
+    ethernet_mtu: 1500
+    queue_pairs_per_flow: 0
+    bufferSize: 131072
+    hosts:
+      - Host0.1
+      - Host0.2
+      - Host0.3
+      - Host0.4
+      - Host1.1
+      - Host1.2
+      - Host1.3
+      - Host1.4
+
+    # example for startDelay
+    # startDelay:
+    #   - host: Host0.1
+    #     txCtrlParam: interBatchPeriod
+    #     # nanoseconds, microseconds, milliseconds, seconds
+    #     delayUnit: seconds
+    #     delayValue: 10
+
+    skip_flows:
+      - []
+      - []
+
+tests:
+  - profile_name: 1GB_all_to_all
+  #- profile_name: 10GB_all_to_all
+  #- profile_name: 128GB_all_to_all
+

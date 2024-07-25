@@ -1,0 +1,79 @@
+
+prechecks:
+   license_check: true
+   check_connectivity: true
+   setup_ports: true
+   setup_layer1: true
+   check_link_state: true
+   configure_interfaces: true
+   arp_gateways: true
+   ping_mesh: true
+   apply_rocev2_traffic: true
+
+   # If pfc_incast=False, set test_profiles.typeOfTest=all_to_all
+   # If pfc_incast=True, set test_profiles.typeOfTest=incast
+   pfc_incast: true
+
+chassis:
+  chassis_chain: [10.36.75.23]
+  primary_chassis_ip: 10.36.75.23
+
+  # port_mode options: nrz | pam4
+  port_mode: pam4
+
+layer1_profiles:
+  - name: layer1
+    auto_negotiate: false
+    ieee_defaults: false
+    link_speed: SPEED_400G
+    link_training: false
+    rs_fec: true
+
+test_profiles:
+  - name: RoCEv2-Preflight-Check
+    # all_to_all | incast
+    typeOfTest: incast
+    enableDcqcn: false
+    ethernet_mtu:  8192
+
+tests:
+  - profile_name: RoCEv2-Preflight-Check
+
+hosts:
+- name: Host0.1
+  address: 71.1.1.2
+  gateway: 71.1.1.1
+  prefix: 24
+  location: 10.36.75.23/1
+  incast: tx
+  rocev2:
+    - remoteEndpoint: Host0.4
+
+- name: Host0.2
+  address: 71.2.1.2
+  gateway: 71.2.1.1
+  prefix: 24
+  location: 10.36.75.23/2
+  incast: tx
+  rocev2:
+    - remoteEndpoint: Host0.4
+
+- name: Host0.3
+  address: 71.3.1.2
+  gateway: 71.3.1.1
+  prefix: 24
+  location: 10.36.75.23/3
+  incast: tx
+  rocev2:
+    - remoteEndpoint: Host0.4
+
+- name: Host0.4
+  address: 71.4.1.2
+  gateway: 71.4.1.1
+  location: 10.36.75.23/4
+  prefix: 24
+  incast: rx
+  rocev2: []
+
+
+
