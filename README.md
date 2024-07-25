@@ -41,7 +41,7 @@
 
 ### Requirements
    - Linux Server to run the script
-   - AresOne chassis with IxNetwork and AresOne licenses
+   - AresOne chassis with IxNetwork Web Edition and Ixos/IxNetwork/AresOne licenses
    - Python 3.7+
    - Python dependencies: pip install requirements.txt
    - Yaml config files
@@ -62,16 +62,16 @@
        - Run full-mesh RoCEv2 on IxNetwork
           
 ### Command
-   &emsp;&emsp;python3.10 rocev2_preflight_checks.py   --config   configs/preflight_checks_pfc_incast.yml  --ixnetwork-host &lt;ip&gt; 
+   &emsp;&emsp;python3.10 rocev2_preflight_checks.py   --config   configs/preflight_checks_pfc_incast.yml  --ixnetwork-host &lt;chassis IP&gt; 
 
 ### Optional Command Line Args
-    --ixnetwork-host: IP address to AresOne chassis where IxNetwork is running<br>&emsp;&emsp;
-    --ixnetwork-uid:  IxNetwork login username<br>&emsp;&emsp;
-    --ixnetwork-pwd:  IxNetwork login password<br>&emsp;&emsp;
-    --ixnetwork-debug: Flag to enable debug level tracing (default is info)<br>&emsp;&emsp;
-    --ixnetwork-session-name: Name for the IxNetwork session<br>&emsp;&emsp;
-    --output-dir: Directory that will hold all result artifacts<br>&emsp;&emsp;
-    --validate: Flag to only validate the configuration and exit<br>&emsp;&emsp;
-    --ixnetwork-rest-port: IxNetwork Rest API listening port<br>&emsp;&emsp;
-    --noCloseSession: Don't close the IxNetwork session for viewing after the test<br>
+    --ixnetwork-host:         IP address to AresOne chassis where IxNetwork is running
+    --ixnetwork-uid:          IxNetwork login username
+    --ixnetwork-pwd:          IxNetwork login password
+    --ixnetwork-debug:        Flag to enable debug level tracing (default is info)
+    --ixnetwork-session-name: Name for the IxNetwork session
+    --output-dir:             Directory that will hold all result artifacts
+    --validate:               Flag to only validate the configuration and exit
+    --ixnetwork-rest-port:    IxNetwork Rest API listening port
+    --noCloseSession:         Don't close the IxNetwork session for viewing after the test
     
