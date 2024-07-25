@@ -6,8 +6,8 @@
 ### Description
   &emsp;&emsp;A script that assures a networking topology is ready for RoCEv2/KCCB testing
   
-### prechecks
-   - license_check: true|false
+### Prechecks
+   - license_check: true|false (Defaults to True)
        - Checks all licenses for expirations
          
    - check_connectivity: true|false
