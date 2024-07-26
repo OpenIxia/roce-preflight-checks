@@ -222,8 +222,8 @@ class KCCB:
 
     def _setup_prechecks(self):
         self._prechecks = False
-        self._precheckSetupTasks = {'License Check':                        {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'Check connectivity to traffic agents': {'result': 'Enabled: Skipped', 'errorMsg': None},
+        self._precheckSetupTasks = {'Check connectivity to traffic agents': {'result': 'Enabled: Skipped', 'errorMsg': None},
+                                    'License Check':                        {'result': 'Enabled: Skipped', 'errorMsg': None},
                                     'Setup Ports':                          {'result': 'Enabled: Skipped', 'errorMsg': None},
                                     'Setup L1 Configs':                     {'result': 'Enabled: Skipped', 'errorMsg': None},
                                     'Check Link State':                     {'result': 'Enabled: Skipped', 'errorMsg': None},
@@ -390,7 +390,7 @@ class KCCB:
 
             self.overallTestTime = time.perf_counter() - self.startTime
             self.showTimeMeasurements()
-
+            
         except Exception as e:
             self._logger.error(traceback.format_exc(None, e))
             self._precheckSetupReport()
@@ -1127,19 +1127,26 @@ class KCCB:
                     self._args.ixnetwork_session_name = "RoCEv2"
 
             self._logger.info(f'Connecting to IxNetwork API server {self._args.ixnetwork_host}')
-            self._delete_session(self._args.ixnetwork_session_name)
-            self._session_assistant = ixnetwork_restpy.SessionAssistant(
-                IpAddress=self._args.ixnetwork_host,
-                UserName=self._args.ixnetwork_uid,
-                Password=self._args.ixnetwork_pwd,
-                SessionName=self._args.ixnetwork_session_name,
-                ClearConfig=clearConfig,
-                RestPort=self._args.ixnetwork_rest_port,
-                LogLevel=ixnetwork_restpy.SessionAssistant.LOGLEVEL_REQUEST_RESPONSE
-                if self._args.ixnetwork_debug
-                else ixnetwork_restpy.SessionAssistant.LOGLEVEL_NONE,
-            )
-
+            
+            try:
+                self._delete_session(self._args.ixnetwork_session_name)
+                self._session_assistant = ixnetwork_restpy.SessionAssistant(
+                    IpAddress=self._args.ixnetwork_host,
+                    UserName=self._args.ixnetwork_uid,
+                    Password=self._args.ixnetwork_pwd,
+                    SessionName=self._args.ixnetwork_session_name,
+                    ClearConfig=clearConfig,
+                    RestPort=self._args.ixnetwork_rest_port,
+                    LogLevel=ixnetwork_restpy.SessionAssistant.LOGLEVEL_REQUEST_RESPONSE
+                    if self._args.ixnetwork_debug
+                    else ixnetwork_restpy.SessionAssistant.LOGLEVEL_NONE,
+                )
+            except Exception as errMsg:
+                errorMsg = f'Unable to connect to:{self._args.ixnetwork_host}\nPlease check IP, username/password and restPort'
+                self._precheckSetupTasks['Check connectivity to traffic agents'].update({'result': f'Failed',
+                                                                                         'errorMsg': errorMsg})
+                raise Exception(errMsg)
+            
             adapter = CustomHTTPAdapter(self._logger)
             self._session_assistant.TestPlatform._connection._session.mount(
                 "http://", adapter
@@ -1377,7 +1384,7 @@ class KCCB:
                         portsDown += f'{port} is down. ConnectionStatus: {vport.connectionStatus}\n'
 
                 self._precheckSetupTasks['Check Link State'].update({'result': 'Failed',
-                                                                     'errorMsg': self.wrapText(f"{portsDown}", width=300)})
+                                                                     'errorMsg': self.wrapText(f"Link up failed after {LINK_TIMEOUT} secs.\nScroll up to see log output", width=300)})
                 raise Exception(portsDown)
             if len(
                 [
@@ -1510,7 +1517,7 @@ class KCCB:
         try:
             self._import(imports)
         except Exception as errMsg:
-            self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed', 'errorMsg': self.wrapText(errMsg)})
+            self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed', 'errorMsg': self.wrapText(errMsg, width=300)})
             raise Exception(errMsg)
 
         self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Passed'})
@@ -1602,7 +1609,12 @@ class KCCB:
             self._total_queue_pairs_per_flow = 1
 
         if self._includeRoceV2NgpfStack:
-            self._import(imports)
+            try:
+                self._import(imports)
+            except Exception as errMsg:
+                self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed',
+                                                                         'errorMsg': self.wrapText('Configuring RoCEv2 in NGPF failed', width=300)})
+                raise Exception(errMsg)
 
         imports = []
         self._num_flows = 0
@@ -1722,7 +1734,12 @@ class KCCB:
 
         if self._includeRoceV2NgpfStack:
             self._logger.info(f'Configuring RoCEv2 NGPF endpoint flows: {self._num_flows}  QPsPerFlow:{self._total_queue_pairs_per_flow}  buffer size: {self._bufferSize} {self._bufferSizeUnit}')
-            self._import(imports)
+            try:
+                self._import(imports)
+            except Exception as errMsg:
+                self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed',
+                                                                         'errorMsg': self.wrapText('Configuring RoCEv2 in NGPF failed', width=300)})
+                raise Exception(errMsg)
 
         self.configRocev2EndpointsDelta = time.perf_counter() - start
 
