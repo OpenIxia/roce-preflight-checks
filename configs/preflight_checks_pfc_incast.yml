@@ -17,9 +17,14 @@ prechecks:
 chassis:
   chassis_chain: [10.36.75.23]
   primary_chassis_ip: 10.36.75.23
+  enable_roce_port_mode: true
 
   # port_mode options: nrz | pam4
   port_mode: pam4
+
+  # serdesType is only for chassis type: 800GE-8P-QDD-M+ROCEV2 
+  # User must state either 53G/56G or 106G/112G
+  serdesType: 53G
 
 layer1_profiles:
   - name: layer1

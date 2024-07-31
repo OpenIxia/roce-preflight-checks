@@ -53,6 +53,7 @@ import paramiko
 import re
 from tabulate import tabulate
 import io
+from pprint import pprint
 
 try:
     import benchmark_spec
@@ -64,6 +65,7 @@ except:
 #    - Fixed bug: Make script to run prechecks with and without rocev2 stack
 #    - Check typeOfTest.  If it's all_to_all and pfc_incast precheck is enabled, abort the script with error.
 #    - Close the test session if passed
+#    - Added Yaml config param serdesType for M chassis type
 VERSION="1.0.6"
 
 
@@ -102,7 +104,7 @@ class ConnectSSH:
             raise Exception(f'\nSSH Failed to connect to the chassis: {host} username:{self.username} password:{self.password}')
         except TimeoutError as errMsg:
             self.mainObj._precheckSetupTasks['License Check'].update({'result': 'Failed',
-                                                                      'errorMsg': self.mainObj.wrapText(f'Connecting to chassis CLI: {host}', width=300)})
+                                                                      'msg': self.mainObj.wrapText(f'Connecting to chassis CLI: {host}', width=300)})
             raise Exception(f'License check: Connecting to chassis: {host}: {errMsg}')
 
     def enterCommand(self, command, commandInput=None):
@@ -159,211 +161,16 @@ class KCCB:
         self._setYamlConfigDefaults()
         self._validate_config()
         self._register_plugin()
-
+        
         self._includeRoceV2NgpfStack = False
         self._expiredLicenses = []
         self._isRocev2LicenseExists = False
         self._typeOfChassis = None
-        # SPEED_100G, SPEED_200G, SPEED_400G, SPEED_800G
+        # SPEED_10G, SPEED_25G, SPEED_40G, SPEED_50G, SPEED_100G, SPEED_200G, SPEED_400G, SPEED_800G
         self._linkSpeed = self._config.layer1_profiles[0].link_speed
 
         if self._args.validate is True:
             exit(0)
-
-    def _setYamlConfigDefaults(self):
-        """
-        Set default Yaml config parameter values.
-        Read user Yaml config file input and overwrite parameter values
-        """
-        self._all_hosts = []
-        with open(self._args.config) as fileObj:
-            ymlConfigs = yaml.safe_load(fileObj)
-
-        for host in ymlConfigs['hosts']:
-            self._all_hosts.append(host['name'])
-
-        self._precheckSelectionsDict = {'prechecks': {'license_check': True,
-                                                      'check_connectivity': False,
-                                                      'setup_ports': False,
-                                                      'setup_layer1': False,
-                                                      'check_link_state': False,
-                                                      'configure_interfaces': False,
-                                                      'arp_gateways': False,
-                                                      'ping_mesh': False,
-                                                      'apply_rocev2_traffic': False,
-                                                      'pfc_incast': False
-                                                     }}
-
-        self._yamlTestNames = {'tests': [{'profile_name': 'RoCEv2-Preflight-Checks'}]}
-        self._yamlChassis = {'chassis': {'chassis_chain': '', 'primary_chassis_ip': ''}}
-
-        self._yamlTestProfileDefaults = {'test_profiles': [{'name': 'RoCEv2-Preflight-Checks',
-                                                            'typeOfTest': 'all_to_all',
-                                                            'enableDcqcn': True,
-                                                            'start': 1073741824,
-                                                            'end': 1073741824,
-                                                            'queue_pairs_per_flow': 0,
-                                                            'bufferSize': 131072,
-                                                            'hosts': [],
-                                                            'skip_flows': [[]],
-                                                            'step': 2,
-                                                            'tos': 225,
-                                                            'hosts': self._all_hosts}]}
-
-        self._yamlLayer1ProfileDefaults = {'layer1_profiles': [{'name': 'layer1',
-                                                                'auto_negotiate': False,
-                                                                'ieee_defaults': False,
-                                                                'link_speed': 'SPEED_400G',
-                                                                'link_training': False,
-                                                                'rs_fec': True,
-                                                                'hosts': self._all_hosts,
-                                                                'flow_control': {'ieee_802_1qbb': {'pfc_class_1': 2}}
-                                                                }]}
-
-    def _setup_prechecks(self):
-        self._prechecks = False
-        self._precheckSetupTasks = {'Check connectivity to traffic agents': {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'License Check':                        {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'Setup Ports':                          {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'Setup L1 Configs':                     {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'Check Link State':                     {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'Configure Interfaces':                 {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'Start Protocols':                      {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'ARP Gateways':                         {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'Ping Mesh':                            {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'Apply RoCEv2 Traffic':                 {'result': 'Enabled: Skipped', 'errorMsg': None},
-                                    'PFC Incast':                           {'result': 'Enabled: Skipped', 'errorMsg': None}}
-
-    def _precheckSetupReport(self):
-        """
-        Generate a tabulated report
-        """
-        if self._prechecks is False:
-            return
-
-        self._precheckSetupHeaders = ['Tasks', 'Results', 'Messages']
-        self._precheckSetupFile = 'precheck_setup_result.txt'
-        finalResult = 'passed'
-
-        precheckTaskList = []
-        for task, result in self._precheckSetupTasks.items():
-            if result['result'] == 'Failed':
-                finalResult = 'failed'
-
-            precheckTaskList.append((task, result['result'], result['errorMsg']))
-
-        table = tabulate(precheckTaskList, headers=self._precheckSetupHeaders, tablefmt='fancy_grid')
-        with io.open(self._precheckSetupFile, 'w', encoding="utf-8") as outFile:
-            outFile.write(table)
-
-        print(table)
-        if finalResult == 'passed':
-            self.cleanup()
-
-    def _verifyLicenses(self):
-        """
-        SSH into the chassis, enter "show licenses" and verify if any license are about to expire in
-        less than 15 days and if any license has expired.
-        """
-        if self._prechecks and self._config.prechecks.license_check is False:
-            self._precheckSetupTasks['License Check'].update({'result': 'Disabled: Skippped'})
-            raise Exception('License check is disabled. Skipping.')
-
-        # S400GD-16P-QDD+FAN+NRZ+ROCEV2: Parse out the first letter for S or M type of AresOne
-        chassisCardDescription = self._ixnetwork.AvailableHardware.find()[0].Chassis.find()[0].Card.find()[0].Description
-        self._logger.info(f'Type of chassis: {chassisCardDescription}')
-        self._typeOfChassis = chassisCardDescription[0]
-
-        if hasattr(self._config, 'chassis') and hasattr(self._config.chassis, 'chassis_chain'):
-            if self._config.chassis.chassis_chain:
-                primaryChassisIp = self._config.chassis.primary_chassis_ip
-        else:
-            sys.exit(f'\nError: The Yaml config file requires key chassis.chassis_chain and primary_chassis_ip. Please update the Yaml config file')
-
-        sshClient = ConnectSSH(mainObj=self, host=primaryChassisIp, username=self._args.ixnetwork_uid, password=self._args.ixnetwork_pwd)
-        output = sshClient.enterCommand('show licenses')
-
-        licenseDateFormat = '%d-%b-%Y'
-        today = datetime.now()
-        # Format: 25-Jun-2024
-        todayObj = today.strftime(licenseDateFormat)
-        licensesInChassis = []
-        licenseWarnings = ''
-
-        for line in output[0]:
-            if 'IxNetwork RoCEv2' in line:
-                #8706-639B-1D6F-DA22 | Keysight IxNetwork RoCEv2 Lossless Ethernet Test Package for AresONE-S 400GE and AresONE-M 800GE fixed chassis models | IxNetwork | 1        | 930-2208-01 | 27-Jul-2024 | 27-Jul-2024
-                #regexMatch = re.search('.+\\| +Keysight IxNetwork RoCEv2.+\\| +IxNetwork +\\| +[0-9]+ +\\| +[^ ]+ +\\| +([^ ]+) +\\| +.+', line.strip())
-                self._isRocev2LicenseExists = True
-
-            regexMatch = re.search('.+\\|\s+(.+)\\| +([^ ]+) +\\| +[0-9]+ +\\| +([^ ]+) +\\| +([^ ]+) +\\| +.+', line.strip())
-            if regexMatch:
-                # 27-Jul-2024
-                productDescription = regexMatch.group(1).strip()
-                product = regexMatch.group(2).strip()
-                partNumber = regexMatch.group(3).strip()
-                expireDate = regexMatch.group(4)
-
-                # 2024-07-27
-                licenseDateObj = datetime.strptime(expireDate, licenseDateFormat).date()
-
-                # 70 days, 0:00:00
-                dateDelta = (licenseDateObj - today.date()).days
-
-                print(f'\nProduct: {product}  ProductNumber: {partNumber}')
-                print(f'\tDescr: {productDescription}')
-
-                if dateDelta < 0:
-                    print(f'\tExpired: {dateDelta} days ago')
-                    self._expiredLicenses.append((product, partNumber, dateDelta))
-                else:
-                    # Duplicate licensess could exists. 1 could be expired and 1 could be valid.
-                    for index, expiredLicense in enumerate(self._expiredLicenses):
-                        expiredProductDescription = expiredLicense[0]
-                        if productDescription == expiredProductDescription:
-                            self._expiredLicenses.pop(index)
-                            break
-
-                    if dateDelta < 15:
-                        print(f'\tWARNING!! {dateDelta} more days until expiration date')
-                        licenseWarnings += f'{product}:{partNumber}: Expires in {dateDelta} days\n'
-                    else:
-                        print(f'\tLicense is valid: {dateDelta} more days until expiration date')
-
-        if len(self._expiredLicenses) > 0:
-            errorMsg = ''
-            for expiredLicense in self._expiredLicenses:
-                errorMsg += f'{expiredLicense[0]}:{expiredLicense[1]}: Expired {expiredLicense[2]} days ago\n\n'
-
-            errorMsg += 'Scroll up for more details'
-            self._precheckSetupTasks['License Check'].update({'result': 'Expired Licenses', 'errorMsg': self.wrapText(errorMsg, width=300)})
-            raise Exception('License verification failed')
-        else:
-            if licenseWarnings:
-                self._precheckSetupTasks['License Check'].update({'result': 'Passed', 'errorMsg': self.wrapText(licenseWarnings, width=300)})
-            else:
-                self._precheckSetupTasks['License Check'].update({'result': 'Passed'})
-
-        print()
-
-    def wrapText(self, text: str, width: int=50):
-        """
-        Wrap long text in a tabulated table cell
-        """
-        newText = ''
-        start = 0
-        maxWords = width
-
-        while True:
-            getText = text[start:maxWords].strip()
-            if not getText:
-                break
-
-            newText += f'{getText}\n'
-            maxWords += width
-            start += width
-
-        return newText
 
     def run(self):
         try:
@@ -393,9 +200,215 @@ class KCCB:
             
         except Exception as e:
             self._logger.error(traceback.format_exc(None, e))
+            #self._logger.error(e)
             self._precheckSetupReport()
-            #self._logger.info(self._config)
-            #raise e
+                        
+    def _setYamlConfigDefaults(self):
+        """
+        Set default Yaml config parameter values.
+        Read user Yaml config file input and overwrite parameter values
+        """
+        self._all_hosts = []
+        with open(self._args.config) as fileObj:
+            ymlConfigs = yaml.safe_load(fileObj)
+
+        for host in ymlConfigs['hosts']:
+            self._all_hosts.append(host['name'])
+
+        self._precheckSelectionsDict = {'prechecks': {'license_check': True,
+                                                      'check_connectivity': False,
+                                                      'setup_ports': False,
+                                                      'setup_layer1': False,
+                                                      'check_link_state': False,
+                                                      'configure_interfaces': False,
+                                                      'arp_gateways': False,
+                                                      'ping_mesh': False,
+                                                      'apply_rocev2_traffic': False,
+                                                      'pfc_incast': False
+                                                     }}
+
+        self._yamlTestNames = {'tests': [{'profile_name': 'RoCEv2-Preflight-Checks'}]}
+
+        self._yamlTestProfileDefaults = {'test_profiles': [{'name': 'RoCEv2-Preflight-Checks',
+                                                            'typeOfTest': 'all_to_all',
+                                                            'enableDcqcn': True,
+                                                            'start': 1073741824,
+                                                            'end': 1073741824,
+                                                            'queue_pairs_per_flow': 0,
+                                                            'bufferSize': 131072,
+                                                            'hosts': [],
+                                                            'skip_flows': [[]],
+                                                            'step': 2,
+                                                            'tos': 225,
+                                                            'hosts': self._all_hosts}]}
+
+        self._yamlLayer1ProfileDefaults = {'layer1_profiles': [{'name': 'layer1',
+                                                                'auto_negotiate': False,
+                                                                'ieee_defaults': False,
+                                                                'link_speed': 'SPEED_400G',
+                                                                'link_training': False,
+                                                                'rs_fec': True,
+                                                                'hosts': self._all_hosts,
+                                                                'flow_control': {'ieee_802_1qbb': {'pfc_class_1': 2}}
+                                                                }]}
+
+    def _setup_prechecks(self):
+        self._prechecks = False
+        self._precheckSetupTasks = {'Check connectivity to traffic agents': {'result': 'Skipped', 'msg': None},
+                                    'License Check':                        {'result': 'Skipped', 'msg': None},
+                                    'Setup Ports':                          {'result': 'Skipped', 'msg': None},
+                                    'Setup L1 Configs':                     {'result': 'Skipped', 'msg': None},
+                                    'Check Link State':                     {'result': 'Skipped', 'msg': None},
+                                    'Configure Interfaces':                 {'result': 'Skipped', 'msg': None},
+                                    'Start Protocols':                      {'result': 'Skipped', 'msg': None},
+                                    'ARP Gateways':                         {'result': 'Skipped', 'msg': None},
+                                    'Ping Mesh':                            {'result': 'Skipped', 'msg': None},
+                                    'Apply RoCEv2 Traffic':                 {'result': 'Skipped', 'msg': None},
+                                    'PFC Incast':                           {'result': 'Skipped', 'msg': None}}
+
+    def _precheckSetupReport(self):
+        """
+        Generate a tabulated report
+        """
+        if self._prechecks is False:
+            return
+
+        self._precheckSetupHeaders = ['Tasks', 'Results', 'Messages']
+        self._precheckSetupFile = 'precheck_setup_result.txt'
+        finalResult = 'passed'
+
+        precheckTaskList = []
+        for task, result in self._precheckSetupTasks.items():
+            if result['result'] == 'Failed':
+                finalResult = 'failed'
+
+            precheckTaskList.append((task, result['result'], result['msg']))
+
+        table = tabulate(precheckTaskList, headers=self._precheckSetupHeaders, tablefmt='fancy_grid')
+        with io.open(self._precheckSetupFile, 'w', encoding="utf-8") as outFile:
+            outFile.write(table)
+
+        print(table)
+        if finalResult == 'passed':
+            self.cleanup()
+
+    def _verifyLicenses(self):
+        """
+        SSH into the chassis, enter "show licenses" and verify if any license are about to expire in
+        less than 15 days and if any license has expired.
+        """
+        if self._prechecks and self._config.prechecks.license_check is False:
+            self._precheckSetupTasks['License Check'].update({'result': 'Disabled: Skippped'})
+            raise Exception('License check is disabled. Skipping.')
+
+        try:
+            try:
+                # S400GD-16P-QDD+FAN+NRZ+ROCEV2: Parse out the first letter for S or M type of AresOne
+                chassisCardDescription = self._ixnetwork.AvailableHardware.find()[0].Chassis.find()[0].Card.find()[0].Description
+                self._logger.info(f'Type of chassis: {chassisCardDescription}')
+            except Exception as errMsg:
+                errorMsg = f'Chassis/Card is down: {self._config.chassis.primary_chassis_ip}'
+                self._precheckSetupTasks['License Check'].update({'result': 'Failed', 'msg': self.wrapText(errorMsg, width=300)})
+                raise Exception(errorMsg)
+        
+            # S400GD-16P-QDD+FAN+NRZ+ROCEV2
+            # M400GD-16P-QDD+FAN+NRZ+ROCEV2
+            # 800GE-8P-QDD-M+RoCEV2
+            self._typeOfChassis = chassisCardDescription
+            
+            if hasattr(self._config, 'chassis') and hasattr(self._config.chassis, 'chassis_chain'):
+                if self._config.chassis.chassis_chain:
+                    primaryChassisIp = self._config.chassis.primary_chassis_ip
+            else:
+                sys.exit(f'\nError: The Yaml config file requires key chassis.chassis_chain and primary_chassis_ip. Please update the Yaml config file')
+
+            sshClient = ConnectSSH(mainObj=self, host=primaryChassisIp, username=self._args.ixnetwork_uid, password=self._args.ixnetwork_pwd)
+            output = sshClient.enterCommand('show licenses')
+
+            licenseDateFormat = '%d-%b-%Y'
+            today = datetime.now()
+            # Format: 25-Jun-2024
+            todayObj = today.strftime(licenseDateFormat)
+            licensesInChassis = []
+            licenseWarnings = ''
+
+            for line in output[0]:
+                if 'IxNetwork RoCEv2' in line:
+                    #8706-639B-1D6F-DA22 | Keysight IxNetwork RoCEv2 Lossless Ethernet Test Package for AresONE-S 400GE and AresONE-M 800GE fixed chassis models | IxNetwork | 1        | 930-2208-01 | 27-Jul-2024 | 27-Jul-2024
+                    #regexMatch = re.search('.+\\| +Keysight IxNetwork RoCEv2.+\\| +IxNetwork +\\| +[0-9]+ +\\| +[^ ]+ +\\| +([^ ]+) +\\| +.+', line.strip())
+                    self._isRocev2LicenseExists = True
+
+                regexMatch = re.search('.+\\|\s+(.+)\\| +([^ ]+) +\\| +[0-9]+ +\\| +([^ ]+) +\\| +([^ ]+) +\\| +.+', line.strip())
+                if regexMatch:
+                    # 27-Jul-2024
+                    productDescription = regexMatch.group(1).strip()
+                    product = regexMatch.group(2).strip()
+                    partNumber = regexMatch.group(3).strip()
+                    expireDate = regexMatch.group(4)
+
+                    # 2024-07-27
+                    licenseDateObj = datetime.strptime(expireDate, licenseDateFormat).date()
+
+                    # 70 days, 0:00:00
+                    dateDelta = (licenseDateObj - today.date()).days
+
+                    print(f'\nProduct: {product}  ProductNumber: {partNumber}')
+                    print(f'\tDescr: {productDescription}')
+
+                    if dateDelta < 0:
+                        print(f'\tExpired: {dateDelta} days ago')
+                        self._expiredLicenses.append((product, partNumber, dateDelta))
+                    else:
+                        # Duplicate licensess could exists. 1 could be expired and 1 could be valid.
+                        for index, expiredLicense in enumerate(self._expiredLicenses):
+                            expiredProductDescription = expiredLicense[0]
+                            if productDescription == expiredProductDescription:
+                                self._expiredLicenses.pop(index)
+                                break
+
+                        if dateDelta < 15:
+                            print(f'\tWARNING!! {dateDelta} more days until expiration date')
+                            licenseWarnings += f'{product}:{partNumber}: Expires in {dateDelta} days\n'
+                        else:
+                            print(f'\tLicense is valid: {dateDelta} more days until expiration date')
+
+            if len(self._expiredLicenses) > 0:
+                errorMsg = ''
+                for expiredLicense in self._expiredLicenses:
+                    errorMsg += f'{expiredLicense[0]}:{expiredLicense[1]}: Expired {expiredLicense[2]} days ago\n\n'
+
+                errorMsg += 'Scroll up for more details'
+                self._precheckSetupTasks['License Check'].update({'result': 'Expired Licenses', 'msg': self.wrapText(errorMsg, width=300)})
+                raise Exception('License verification failed')
+            else:
+                if licenseWarnings:
+                    self._precheckSetupTasks['License Check'].update({'result': 'Passed', 'msg': self.wrapText(licenseWarnings, width=300)})
+                else:
+                    self._precheckSetupTasks['License Check'].update({'result': 'Passed'})
+
+            print()
+        except Exception as errMsg:
+            self._precheckSetupTasks['License Check'].update({'result': 'Failed', 'msg': self.wrapText(str(errMsg), width=300)})
+            raise Exception(errMsg)
+        
+    def wrapText(self, text: str, width: int=50):
+        """
+        Wrap long text in a tabulated table cell
+        """
+        newText = ''
+        start = 0
+        maxWords = width
+
+        while True:
+            getText = text[start:maxWords].strip()
+            if not getText:
+                break
+
+            newText += f'{getText}\n'
+            maxWords += width
+            start += width
+
+        return newText
 
     def showTimeMeasurements(self):
         '''
@@ -422,7 +435,7 @@ class KCCB:
             return
 
         # IxNetwork Web Edition
-        if '-useAPIServer' in self._ixnetwork.Globals.CommandArgs and self._args.noCloseSession:
+        if '-useAPIServer' in self._ixnetwork.Globals.CommandArgs and self._args.no_close_session:
             return
 
         try:
@@ -523,7 +536,7 @@ class KCCB:
             action="store_true"
         )
         parser.add_argument(
-            "--noCloseSession",
+            "--no-close-session",
             help="Don't close the IxNetwork test session",
             action="store_true",
             required=False,
@@ -544,7 +557,7 @@ class KCCB:
             + "layer1_profiles:             # list of layer1 profiles\n"
             + "- name: layer1               # logical name of the layer1 profile\n"
             + "  hosts: [Host1.1]           # list of hosts in the layer1 profile\n"
-            + "  link_speed: SPEED_100G     # the speed of the port (SPEED_100G | SPEED_200G | SPEED_400G)\n"
+            + "  link_speed: SPEED_100G     # the speed of the port (SPEED_100G | SPEED_200G | SPEED_400G | SPEED_800G)\n"
             + "  auto_negotiate: true       # enable/disable auto negotiation\n"
             + "  ieee_defaults: false       # true overrides auto_negotiate, link_training, rs_fec values for gigabit ethernet interfaces\n"
             + "  link_training: false       # enable/disable gigabit ethernet link training\n"
@@ -589,12 +602,29 @@ class KCCB:
         schema = {
             "type": "object",
             "required": [
+                "chassis",
                 "hosts",
                 "layer1_profiles",
                 "test_profiles",
                 "tests",
             ],
             "properties": {
+                "chassis": {
+                    "type": "object",
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "chassis_chain",
+                            "primary_chassis_ip",
+                            "port_mode"
+                        ],
+                        "properties": {
+                            "chassis_chain": {"type": "array"},
+                            "primary_chassis_ip": {"type": "string"},
+                            "port_mode": {"type": "string"}
+                        }
+                    }
+                },
                 "hosts": {
                     "type": "array",
                     "minItems": 2,
@@ -640,7 +670,7 @@ class KCCB:
                             },
                             "link_speed": {
                                 "type": "string",
-                                "enum": ["SPEED_100G", "SPEED_200G", "SPEED_400G", "SPEED_800G"],
+                                "enum": ["SPEED_10G", "SPEED_25G", "SPEED_40G", "SPEED_50G", "SPEED_100G", "SPEED_200G", "SPEED_400G", "SPEED_800G"],
                             },
                             "rs_fec": {"type": "boolean"},
                             "auto_negotiate": {"type": "boolean"},
@@ -683,6 +713,8 @@ class KCCB:
                             "step",
                             "ethernet_mtu",
                             "queue_pairs_per_flow",
+                            "bufferSize",
+                            "enableDcqcn",
                             "typeOfTest"
                         ],
                         "properties": {
@@ -698,6 +730,8 @@ class KCCB:
                             "tos": {"type": "integer", "default": "0"},
                             "queue_pairs_per_flow": {"type": "integer", "default": 0},
                             "typeOfTest": {"type": "string", "default": "all_to_all"},
+                            "enableDcqcn": {"type": "boolean", "default": True},
+                            "bufferSize": {"type": "integer", "default": 131072},
                             "skip_flows": {
                                 "type": "array",
                                 "items": {
@@ -763,7 +797,6 @@ class KCCB:
         with open(self._args.config) as fp:
             yamlConfigs = yaml.safe_load(fp)
             config_dict = self._precheckSelectionsDict
-            config_dict.update(self._yamlChassis)
             config_dict.update(self._yamlTestNames)
             config_dict.update(self._yamlTestProfileDefaults)
             config_dict.update(self._yamlLayer1ProfileDefaults)
@@ -927,7 +960,7 @@ class KCCB:
 
             if self._prechecks and self._config.prechecks.pfc_incast and self._test_profile.typeOfTest == 'all_to_all':
                 errMsg = f'Precheck pfc_incast=True and test_profiles.typeOfTest="all_to_all".\ntypeOfTest needs to be "incast" if pfc_incast=True\nif pfc_incast=False, typeOfTest could be incast or all_to_all.\nNot sure what test to run.'
-                self._precheckSetupTasks['PFC Incast'].update({'result': 'Failed', 'errorMsg': self.wrapText(errMsg, width=300)})
+                self._precheckSetupTasks['PFC Incast'].update({'result': 'Failed', 'msg': self.wrapText(errMsg, width=300)})
                 raise Exception(errMsg)
 
             while data_size <= self._test_profile.end:
@@ -976,15 +1009,19 @@ class KCCB:
                 self._start_control_plane()
                 self._pingEndpoints()
 
-                if self._prechecks and self._config.prechecks.apply_rocev2_traffic:
-                    if self._config.prechecks.license_check and self._isRocev2LicenseExists is False:
-                        self._precheckSetupTasks['Apply RoCEv2 Traffic'].update({'result': 'Enabled: Skipped',
-                                                                                 'errorMsg': 'License check enabled. RoCEv2 license does not exists.'})
-                        raise Exception('RoCEv2 license does not exists. Skipping apply RoCEv2 traffic')
-
+                if self._prechecks:
+                    if self._config.prechecks.apply_rocev2_traffic:
+                        if self._config.prechecks.license_check and self._isRocev2LicenseExists is False:
+                            self._precheckSetupTasks['Apply RoCEv2 Traffic'].update({'result': 'Enabled: Skipped',
+                                                                                    'msg': 'License check enabled. RoCEv2 license does not exists.'})
+                            raise Exception('RoCEv2 license does not exists. Skipping apply RoCEv2 traffic')
+                    else:
+                        self._precheckSetupTasks['Apply RoCEv2 Traffic'].update({'result': 'Disabled: Skipped', 'msg': ''})
+                        raise Exception('Apply RoCev2 Traffic is disabled')
+                                       
                 if self._prechecks and self._includeRoceV2NgpfStack is False:
-                    self._precheckSetupTasks['Apply RoCEv2 Traffic'].update({'result': 'Enabled: Skipped',
-                                                                             'errorMsg': 'RoCEv2 protocol stack was not included'})
+                    self._precheckSetupTasks['Apply RoCEv2 Traffic'].update({'result': 'Skipped',
+                                                                             'msg': 'RoCEv2 protocol stack was not included'})
                     self._logger.info('Stopping all protocols')
                     self._ixnetwork.StopAllProtocols(Arg1='sync')
                     self._precheckSetupReport()
@@ -1023,7 +1060,7 @@ class KCCB:
                     self._ixnetwork.Traffic.Apply()
                     self._precheckSetupTasks['Apply RoCEv2 Traffic'].update({'result': 'Passed'})
                 except Exception as errMsg:
-                    self._precheckSetupTasks['Apply RoCEv2 Traffic'].update({'result': 'Failed', 'errorMsg': self.wrapText(errMsg)})
+                    self._precheckSetupTasks['Apply RoCEv2 Traffic'].update({'result': 'Failed', 'msg': self.wrapText(errMsg)})
                     raise Exception(errMsg)
 
                 if self._prechecks:
@@ -1144,7 +1181,7 @@ class KCCB:
             except Exception as errMsg:
                 errorMsg = f'Unable to connect to:{self._args.ixnetwork_host}\nPlease check IP, username/password and restPort'
                 self._precheckSetupTasks['Check connectivity to traffic agents'].update({'result': f'Failed',
-                                                                                         'errorMsg': errorMsg})
+                                                                                         'msg': errorMsg})
                 raise Exception(errMsg)
             
             adapter = CustomHTTPAdapter(self._logger)
@@ -1188,12 +1225,12 @@ class KCCB:
 
             if self._addChassis() is False:
                 self._precheckSetupTasks['Check connectivity to traffic agents'].update({'result': f'Failed',
-                                                                                         'errorMsg': f'Add chassis failed'})
+                                                                                         'msg': f'Add chassis failed'})
                 raise Exception(f'Adding Chassis failed')
             else:
                 self._logger.info(f"Connected to traffic generator. IxNetwork Version:{self._ixnetwork.Globals.BuildNumber}")
                 self._precheckSetupTasks['Check connectivity to traffic agents'].update({'result': f'Passed',
-                                                                                        'errorMsg': f'IxNetwork Version: {self._ixnetwork.Globals.BuildNumber}'})
+                                                                                         'msg': f'IxNetwork Version: {self._ixnetwork.Globals.BuildNumber}'})
 
     def _addChassis(self):
         # Configure chained chassis's
@@ -1226,7 +1263,60 @@ class KCCB:
         - Friendly name is either nrz or pam4 set by user in the Yaml config file
         - Fanout cable type is determined by verifying the port location for a dot, in
           which a dot represents a fanout port
+        - For chassis type only: 800GE-8P-QDD-M+ROCEV2
+            - Must know if the DUT's Serdes type is 53G/56G or 106G/112G (converts to 53G and 106G)
+            - The Yaml config file must state the value for serdesType
+        
+        Chassis type: S400GD-16P-QDD+FAN+NRZ+ROCEV2    
+            10G:  starEightByTenGigFannedOutNRZHalfDensityHighStream
+                  starSixteenByTenGigFannedOutNRZ
+            25G:  starEightByTwentyFiveGigFannedOutNRZHalfDensityHighStream
+                  starSixteenByTwentyFiveGigFannedOutNRZ 
+            40G:  starFourByFortyGigFannedOutNRZ 
+            50G:  starSixteenByFiftyGigFannedOutPAM4
+                  starEightByFiftyGigFannedOutNRZ
+                  starEightByFiftyGigFannedOutPAM4HalfDensityHighStream
+            100G: starFourByHundredGigFannedOutNRZ
+                  starFourByHundredGigFannedOutNRZRoCEv2
+                  starFourByHundredGigFannedOutPAM4HalfDensityHighStream
+                  starEightByHundredGigFannedOutPAM4
+                  starEightByHundredGigFannedOutPAM4RoCEv2
+            200G: starFourByTwoHundredGigFannedOutPAM4
+                  starFourByTwoHundredGigFannedOutPAM4RoCEv2
+            400G: starTwoByFourHundredGigNonFannedOutPAM4 
+                  starTwoByFourHundredGigFannedOutPAM4RoCEv2
         """
+        # For M chassis type only
+        serdesType = None
+        
+        # For S chassis type only
+        halfDensityHighStream = 'noHalfDensityHS'
+        if hasattr(self._config.chassis, 'half_density_high_stream'):
+            if self._config.chassis.half_density_high_stream:
+                halfDensityHighStream = 'halfDensityHS'
+        
+        if hasattr(self._config.chassis, 'port_mode'):
+            portMode = self._config.chassis.port_mode
+        else:
+            portMode = 'nrz'
+            self._logger.warning(f'portMode was not specified in Yaml configs. Defaulting to NRZ.')
+
+        if self._typeOfChassis == '800GE-8P-QDD-M+ROCEV2':
+            if hasattr(self._config.chassis, 'serdesType'):
+                serdesType = self._config.chassis.serdesType
+                
+                if serdesType not in ['53G', '56G', '106G', '112G']:
+                    errorMsg = f'The serdesType needs to be either 53G/56G or 106G/112G.\nYou stated {serdesType}'
+                    self._precheckSetupTasks['Setup Ports'].update({'result': 'Failed',
+                                                                    'msg': self.wrapText(errorMsg, width=300)})
+                    raise Exception(errorMsg)   
+            else:
+                serdesType = '106G'
+                self._logger.warning(f'serdesType was not specified in Yaml configs. Defaulting to 106G')
+            
+            if serdesType == '56G': serdesType = '53G'
+            if serdesType == '112G': serdesType = '106G'
+                            
         for host in self._config.hosts:
             # 10.36.67.37/5 or 10.36.67.37/5.2
             portLocationSample = host.location
@@ -1235,44 +1325,86 @@ class KCCB:
                 self._cableType = 'fanout'
             else:
                 self._cableType = 'nonFanout'
-
-        # Note:
-        #    - Bug: 400G pam4 non-fanout needs to use starTwoByFourHundredGigFannedOutPAM4RoCEv2
-        portModesRocev2 = {'S': {'SPEED_100G': {'nrz':  {'fanout': 'starFourByHundredGigFannedOutNRZRoCEv2'},
-                                                'pam4': {'fanout': 'startEightByHundredGigFannedOutPAM4RoCEv2'}
-                                               },
-                                 'SPEED_200G': {'pam4': {'fanout': 'starFourByTwoHundredGigFannedOutPAMRoCEv2'}
-                                               },
-                                 'SPEED_400G': {'pam4': {'fanout':    'starTwoByFourHundredGigFannedOutPAM4RoCEv2',
-                                                         'nonFanout': 'starTwoByFourHundredGigFannedOutPAM4RoCEv2'}
-                                               },
-                                },
-                           'M': {'SPEED_400G': {'pam4': {'fanout':    'starTwoByFourHundredGigFannedOutPAM4RoCEv2',
-                                                         'nonFanout': 'starTwoByFourHundredGigFannedOutPAM4RoCEv2'}}
-                                               }
-                                }
-
-        portModesNonRocev2 = {'S': {'SPEED_100G': {'nrz':  {'fanout':   'starFourByHundredGigFannedOutNRZ'},
-                                                   'pam4': {'fanout':   'starEightByHundredGigFannedOutPAM4'}
-                                                  },
-                                    'SPEED_400G': {'pam4': {'fanout':   'starTwoByFourHundredGigFannedOutPAM4',
-                                                            'nonFanout': 'starTwoByFourHundredGigNonFannedOutPAM4'}
-                                                  },
-                                   },
-                              'M': {'SPEED_400G': {'pam4': {'fanout': 'starTwoByFourHundredGigFannedOutPAM4'}
-                                                  }
-                                   }
-                             }
-
+            
+        # Notes: Two chassis types:
+        #    S400GD-16P-QDD+FAN+NRZ+ROCEV2
+        #    800GE-8P-QDD-M+ROCEV2 
+        #    - Bug: Roce:      S-chassis: 400G pam4 non-fanout should be starTwoByFourHundredGigNonFannedOutPAM4RoCEv2, but uses starTwoByFourHundredGigFannedOutPAM4RoCEv2
+        #    - Bug: Non-Roce:  M-chassis: 100G pam4 fanout 53G should be aresOne-M-FourByOneHundredPAM4-53G, but uses aresOne-M-TwoByFourHundredGigPAM4-106G-RoCEv2
+        portModesRocev2 = {'S400GD-16P-QDD+FAN+NRZ+ROCEV2': {'SPEED_100G': {'nrz':  {'fanout':    {'noHalfDensityHS': 'starFourByHundredGigFannedOutNRZRoCEv2'}},
+                                                                            'pam4': {'fanout':    {'noHalfDensityHS': 'startEightByHundredGigFannedOutPAM4RoCEv2'}}},
+                                                             'SPEED_200G': {'pam4': {'fanout':    {'noHalfDensityHS': 'starFourByTwoHundredGigFannedOutPAMRoCEv2'}}},
+                                                             'SPEED_400G': {'pam4': {'fanout':    {'noHalfDensityHS': 'starTwoByFourHundredGigFannedOutPAM4RoCEv2'},
+                                                                                     'nonFanout': {'noHalfDensityHS': 'starTwoByFourHundredGigFannedOutPAM4RoCEv2'}}},
+                                                            },
+                           '800GE-8P-QDD-M+ROCEV2': {'SPEED_100G': {'pam4': {'53G':   'aresOne-M-FourByOneHundredGigPAM4-53G-RoCEv2',
+                                                                             '106G':  'aresOne-M-EightByOneHundredGigPAM4-106G-RoCEv2'}},
+                                                     'SPEED_200G': {'pam4': {'53G':   'aresOne-M-TwoByTwoHundredGigPAM4-53G-RoCEv2',
+                                                                             '106G':  'aresOne-M-FourByTwoHundredGigPAM4-106G-RoCEv2'}},
+                                                     'SPEED_400G': {'pam4': {'53G':   'aresOne-M-OneByFourHundredGigPAM4-53G-RoCEv2',
+                                                                             '106G':  'aresOne-M-TwoByFourHundredGigPAM4-106G-RoCEv2'}},
+                                                     'SPEED_800G': {'pam4': {'106G':  'aresOne-M-OneByEightHundredGigPAM4-106G-RoCEv2'}}
+                                                    }
+                           }
+            
+        portModesNonRocev2 = {'S400GD-16P-QDD+FAN+NRZ+ROCEV2': {'SPEED_10G': {'nrz':  {'fanout':     {'halfDensityHS':   'starEightByTenGigFannedOutNRZHalfDensityHighStream',
+                                                                                                      'noHalfDensityHS': 'starSixteenByTenGigFannedOutNRZ'}}},
+                                                                'SPEED_25G': {'nrz':  {'fanout':     {'halfDensityHS':   'starEightByTwentyFiveGigFannedOutNRZHalfDensityHighStream',
+                                                                                                      'noHalfDensityHS': 'starSixteenByTwentyFiveGigFannedOutNRZ'}}},
+                                                                'SPEED_40G': {'nrz':  {'fanout':     {'noHalfDensityHS': 'starFourByFortyGigFannedOutNRZ'}}},
+                                                                'SPEED_50G': {'nrz':  {'fanout':     {'noHalfDensityHS': 'starEightByFiftyGigFannedOutNRZ'}},
+                                                                              'pam4': {'fanout':     {'noHalfDensityHS': 'starSixteenByFiftyGigFannedOutPAM4',
+                                                                                                      'halfDensityHS':   'starEightByFiftyGigFannedOutPAM4HalfDensityHighStream'}}},
+                                                                'SPEED_100G': {'nrz':  {'fanout':    {'noHalfDensityHS': 'starFourByHundredGigFannedOutNRZ'}},
+                                                                               'pam4': {'fanout':    {'noHalfDensityHS': 'starEightByHundredGigFannedOutPAM4',
+                                                                                                      'halfDensityHS':   'starFourByHundredGigFannedOutPAM4HalfDensityHighStream'}}},
+                                                                'SPEED_200G': {'pam4': {'fanout':    {'noHalfDensityHS': 'starFourByTwoHundredGigFannedOutPAM4'}}},
+                                                                'SPEED_400G': {'pam4': {'nonFanout': {'noHalfDensityHS': 'starTwoByFourHundredGigNonFannedOutPAM4'}}},
+                                                               },
+                              '800GE-8P-QDD-M+ROCEV2': {'SPEED_100G': {'pam4': {'53G':  'aresOne-M-TwoByFourHundredGigPAM4-106G-RoCEv2',
+                                                                                '106G': 'aresOne-M-EightByOneHundredGigPAM4-106G'}},
+                                                        'SPEED_200G': {'pam4': {'53G':  'aresOne-M-TwoByTwoHundredGigPAM4-53G',
+                                                                                '106G': 'aresOne-M-FourByTwoHundredGigPAM4-106G'}},
+                                                        'SPEED_400G': {'pam4': {'53G':  'aresOne-M-OneByFourHubdredGigPAM4-53G',
+                                                                                '106G': 'aresOne-M-TwoByFourHundredGigPAM4-106G'}},
+                                                        'SPEED_800G': {'pam4': {'106G': 'aresOne-M-OneByEightHundredGigPAM4-106G'}},
+                                                        'SPEED_50G':  {'pam4': {'53G':  'aresOne-M-EightByFiftyGigPAM4-53G'}}
+                                                        }
+                              }
+        
+        self._logger.info(f'getPortMode: typeOfChassis:{self._typeOfChassis}  linkSpeed:{self._linkSpeed}  portMode:{portMode}  cableType:{self._cableType}  serdesType:{serdesType}  {halfDensityHighStream}')
+        
+        rocePortMode = True
+        if hasattr(self._config.chassis, 'enable_roce_port_mode'):
+            rocePortMode = self._config.chassis.enable_roce_port_mode
+        
         if self._config.prechecks.license_check is False:
-            self._logger.warning(f'User set license check=False. Defaulting portMode with RoCEv2')
-            return portModesRocev2[self._typeOfChassis][self._linkSpeed][portMode].get(self._cableType, None)
-
+            self._logger.warning(f'User set license check=False. Defaulting portMode with RoCEv2 enabled. Otherwise, set chassis.enable_roce_port_mode=false.')
+            
         if self._isRocev2LicenseExists:
-            return portModesRocev2[self._typeOfChassis][self._linkSpeed][portMode].get(self._cableType, None)
+            if self._typeOfChassis == '800GE-8P-QDD-M+ROCEV2':
+                if self._linkSpeed == 'SPEED_50G':
+                    serdesType = '53G'
+                    portMode = 'pam4'
+
+                    return portModesNonRocev2[self._typeOfChassis][self._linkSpeed][portMode].get(serdesType, None)
+                 
+                if rocePortMode:                   
+                    return portModesRocev2[self._typeOfChassis][self._linkSpeed][portMode].get(serdesType, None)
+                else:
+                    return portModesNonRocev2[self._typeOfChassis][self._linkSpeed][portMode].get(serdesType, None)
+                
+            if self._typeOfChassis == 'S400GD-16P-QDD+FAN+NRZ+ROCEV2':
+                if rocePortMode:
+                    return portModesRocev2[self._typeOfChassis][self._linkSpeed][portMode][self._cableType][halfDensityHighStream]
+                else:
+                    return portModesNonRocev2[self._typeOfChassis][self._linkSpeed][portMode][self._cableType][halfDensityHighStream]
 
         if self._isRocev2LicenseExists is False:
-            return portModesNonRocev2[self._typeOfChassis][self._linkSpeed][portMode].get(self._cableType, None)
+            if self._typeOfChassis == '800GE-8P-QDD-M+ROCEV2':
+                return portModesNonRocev2[self._typeOfChassis][self._linkSpeed][portMode].get(serdesType, None)
+            else:
+                return portModesNonRocev2[self._typeOfChassis][self._linkSpeed][portMode][self._cableType][halfDensityHighStream]
 
     def _setup_ports(self):
         """Setup ports and ngpf topology, determine frame overhead
@@ -1289,10 +1421,16 @@ class KCCB:
         # starEightByHundredGigFannedOutPAM4 | starFourByHundredGigFannedOutNRZRoCEv2 | starFourByHundredGigFannedOutNRZ
         if hasattr(self._config, 'chassis') and hasattr(self._config.chassis, 'port_mode'):
             # port_mode: nrz or pam4
-            portMode = self._getPortMode(portMode=self._config.chassis.port_mode)
+            try:
+                portMode = self._getPortMode()
+            except KeyError as errMsg:
+                self._precheckSetupTasks['Setup Ports'].update({'result': 'Failed',
+                                                                'msg': self.wrapText(f'getPortMode key error: {errMsg}\nchassisType:{self._typeOfChassis}\nportMode:{self._config.chassis.port_mode}\nlinkSpeed:{self._linkSpeed}', width=300)})
+                raise Exception(errMsg)
+              
             if portMode is None:
                 self._precheckSetupTasks['Setup Ports'].update({'result': 'Failed',
-                                                                'errorMsg': f'Unknown port-mode in Yaml config file: {self._config.chassis.port_mode}'})
+                                                                'msg': f'Unknown port-mode in Yaml config file: {self._config.chassis.port_mode}'})
                 raise Exception(f'Unknown port-mode: {self._config.chassis.port_mode}')
 
             location_list = []
@@ -1300,9 +1438,9 @@ class KCCB:
             for host in self._config.hosts:
                 location_list.append(host.location)
                 port_mode_list.append(portMode)
-                # the last true is forcefully clear ownership
+                # The last true is forcefully clear ownership
 
-            self._logger.info(f'Setup Ports: PortSpeed:{self._linkSpeed}  CableType:{self._cableType}  PortMode:{self._config.chassis.port_mode} -> {portMode}')
+            self._logger.info(f'Setup Ports: PortMode:{self._config.chassis.port_mode} -> {portMode}')
             self.startChangePortModeTime = time.perf_counter()
 
             try:
@@ -1310,8 +1448,8 @@ class KCCB:
                 self._ixnetwork.SwitchModeLocations(Arg1=location_list, Arg2=port_mode_list, Arg3=True)
             except Exception as errMsg:
                 self._precheckSetupTasks['Setup Ports'].update({'result': 'Failed',
-                                                                'errorMsg': self.wrapText(f'PortMode misconfiguration: {self._config.chassis.port_mode}',
-                                                                                          width=300)})
+                                                                'msg': self.wrapText(f'getPortMode key error: {errMsg}\nchassisType:{self._typeOfChassis}\nportMode:{self._config.chassis.port_mode}\nlinkSpeed:{self._linkSpeed}',
+                                                                width=300)})
                 raise Exception(f'Setup Ports failed: {errMsg}')
 
             self.changePortModeTime = time.perf_counter() - self.startChangePortModeTime
@@ -1333,7 +1471,7 @@ class KCCB:
             self._precheckSetupTasks['Setup Ports'].update({'result': 'Passed'})
         except Exception as errMsg:
             self._precheckSetupTasks['Setup Ports'].update({'result': 'Failed',
-                                                            'errorMsg': self.wrapText(str(errMsg))})
+                                                            'msg': self.wrapText(str(errMsg), width=300)})
             raise Exception(errMsg)
 
         self._ixnetwork.Vport.find().ConnectPorts(Arg2=True)
@@ -1384,7 +1522,7 @@ class KCCB:
                         portsDown += f'{port} is down. ConnectionStatus: {vport.connectionStatus}\n'
 
                 self._precheckSetupTasks['Check Link State'].update({'result': 'Failed',
-                                                                     'errorMsg': self.wrapText(f"Link up failed after {LINK_TIMEOUT} secs.\nScroll up to see log output", width=300)})
+                                                                     'msg': self.wrapText(f"Link up failed after {LINK_TIMEOUT} secs.\nScroll up to see log output", width=300)})
                 raise Exception(portsDown)
             if len(
                 [
@@ -1517,7 +1655,7 @@ class KCCB:
         try:
             self._import(imports)
         except Exception as errMsg:
-            self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed', 'errorMsg': self.wrapText(errMsg, width=300)})
+            self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed', 'msg': self.wrapText(errMsg, width=300)})
             raise Exception(errMsg)
 
         self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Passed'})
@@ -1561,7 +1699,7 @@ class KCCB:
             if self._config.prechecks.pfc_incast and hasattr(self._config.hosts[i], 'rocev2') is False:
                 errorMsg = f'pfc_incast=True. Expecting host {self._config.hosts[i].name}\nwith rocev2 param with an remoteEndpoint host.'
                 self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed',
-                                                                         'errorMsg': self.wrapText(errorMsg, width=300)})
+                                                                         'msg': self.wrapText(errorMsg, width=300)})
                 raise Exception(errorMsg)
 
             # Note: self._test_profile was set in setup_control_plane()
@@ -1576,7 +1714,7 @@ class KCCB:
                         if hasattr(self._config.hosts[i], 'incast') is False:
                             errorMsg = f'pfc_incast=True. Expecting host {self._config.hosts[i].name}\nwith incast parameter set to tx or rx.'
                             self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed',
-                                                                                     'errorMsg': self.wrapText(errorMsg, width=300)})
+                                                                                     'msg': self.wrapText(errorMsg, width=300)})
                             raise Exception(errorMsg)
 
                     # Calculate: Every srcHost's endpoint queuePairIds
@@ -1613,7 +1751,7 @@ class KCCB:
                 self._import(imports)
             except Exception as errMsg:
                 self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed',
-                                                                         'errorMsg': self.wrapText('Configuring RoCEv2 in NGPF failed', width=300)})
+                                                                         'msg': self.wrapText('Configuring RoCEv2 in NGPF failed', width=300)})
                 raise Exception(errMsg)
 
         imports = []
@@ -1738,7 +1876,7 @@ class KCCB:
                 self._import(imports)
             except Exception as errMsg:
                 self._precheckSetupTasks['Configure Interfaces'].update({'result': 'Failed',
-                                                                         'errorMsg': self.wrapText('Configuring RoCEv2 in NGPF failed', width=300)})
+                                                                         'msg': self.wrapText('Configuring RoCEv2 in NGPF failed', width=300)})
                 raise Exception(errMsg)
 
         self.configRocev2EndpointsDelta = time.perf_counter() - start
@@ -1746,7 +1884,7 @@ class KCCB:
     def _pingEndpoints(self):
         if self._prechecks:
             if self._config.prechecks.ping_mesh is False:
-                self._precheckSetupTasks['Ping Mesh'].update({'result': 'Disabled: Skippped'})
+                #self._precheckSetupTasks['Ping Mesh'].update({'result': 'Disabled: Skippped'})
                 raise Exception (f'Ping Mesh is disabled. Skipping.')
 
             if self._precheckSetupTasks['Configure Interfaces']['result'] == 'failed':
@@ -1792,7 +1930,7 @@ class KCCB:
 
             if pingException:
                 self._precheckSetupTasks['Ping Mesh'].update({'result': 'Failed',
-                                                            'errorMsg': self.wrapText(pingFailures, width=300)})
+                                                              'msg': self.wrapText(pingFailures, width=300)})
                 raise Exception('Pinging endpoints with 64 Bytes frames failed')
             else:
                 self._precheckSetupTasks['Ping Mesh'].update({'result': 'Passed'})
@@ -1825,7 +1963,7 @@ class KCCB:
 
                 if pingException:
                     self._precheckSetupTasks['Ping Mesh'].update({'result': 'Failed',
-                                                                            'errorMsg': self.wrapText(pingFailures, width=300)})
+                                                                            'msg': self.wrapText(pingFailures, width=300)})
                     raise Exception('Pinging endpoints with jumbo size frames failed')
                 else:
                     self._precheckSetupTasks['Ping Mesh'].update({'result': 'Passed'})
@@ -1874,13 +2012,33 @@ class KCCB:
             - /vport/l1Config/<currentType>/fcoe
         """
         if self._prechecks and self._config.prechecks.setup_layer1 is False:
-            self._precheckSetupTasks['Setup L1 Configs'].update({'result': 'Disabled: Skippped'})
+            #self._precheckSetupTasks['Setup L1 Configs'].update({'result': 'Disabled: Skippped'})
             raise Exception('Setup Layer1 is disabled. Skipping.')
 
         self._logger.info("Setup ports layer1")
 
         # add parameter for port modes. resource
         speed_map = {
+            "SPEED_10G": {
+                "actualSpeed": 10000,
+                "speed": "speed10g",
+                "resourceMode": ["novusHundredGig", "OneHundredGig", "FourByHundredGig", "EightHundredGig"],
+            },
+            "SPEED_25G": {
+                "actualSpeed": 25000,
+                "speed": "speed25g",
+                "resourceMode": ["novusHundredGig", "OneHundredGig", "FourByHundredGig", "EightHundredGig"],
+            },
+            "SPEED_40G": {
+                "actualSpeed": 40000,
+                "speed": "speed40g",
+                "resourceMode": ["novusHundredGig", "OneHundredGig", "FourByHundredGig", "EightHundredGig"],
+            },
+            "SPEED_50G": {
+                "actualSpeed": 50000,
+                "speed": "speed50g",
+                "resourceMode": ["novusHundredGig", "OneHundredGig", "FourByHundredGig", "EightHundredGig"],
+            },
             "SPEED_100G": {
                 "actualSpeed": 100000,
                 "speed": "speed100g",
@@ -1895,6 +2053,11 @@ class KCCB:
                 "actualSpeed": 400000,
                 "speed": "speed400g",
                 "resourceMode": ["FourHundredGig"],
+            },
+            "SPEED_800G": {
+                "actualSpeed": 800000,
+                "speed": "speed800g",
+                "resourceMode": ["EightHundredGig"],
             },
         }
         payload = {
@@ -2014,7 +2177,7 @@ class KCCB:
             try:
                 self._import(imports)
             except Exception as errMsg:
-                self._precheckSetupTasks['Setup L1 Configs'].update({'result': 'Failed', 'errorMsg': self.wrapText(errMsg)})
+                self._precheckSetupTasks['Setup L1 Configs'].update({'result': 'Failed', 'msg': self.wrapText(errMsg)})
                 raise Exception(errMsg)
 
             self._precheckSetupTasks['Setup L1 Configs'].update({'result': 'Passed'})
@@ -2096,7 +2259,7 @@ class KCCB:
 
     def _start_control_plane(self):
         if self._precheckSetupTasks['Configure Interfaces']['result'] == 'failed':
-            self._precheckSetupTasks['Start Protocols'].update({'result': 'Disabled: Skippped'})
+            #self._precheckSetupTasks['Start Protocols'].update({'result': 'Disabled: Skippped'})
             raise Exception (f'Configure interfaces failed. Skipping Start Protocol.')
 
         startAllProtocolStart = time.perf_counter()
@@ -2105,7 +2268,7 @@ class KCCB:
         try:
             self._ixnetwork.StartAllProtocols(Arg1="async")
         except Exception as errMsg:
-            self._precheckSetupTasks['Start Protocols'].update({'result': 'Failed', 'errorMsg': self.wrapText(str(errMsg))})
+            self._precheckSetupTasks['Start Protocols'].update({'result': 'Failed', 'msg': self.wrapText(str(errMsg), width=300)})
             raise Exception(f'Starting Protocols: Failed: {str(errMsg)}')
 
         payload = {
@@ -2154,7 +2317,7 @@ class KCCB:
 
                 if self._config.prechecks.arp_gateways:
                     self._precheckSetupTasks['ARP Gateways'].update({'result': 'Failed',
-                                                                     'errorMsg': self.wrapText(f'Failed to resolve gateway Mac after {MAC_RESOLUTION_TIMEOUT} seconds')})
+                                                                     'msg': self.wrapText(f'Failed to resolve gateway Mac after {MAC_RESOLUTION_TIMEOUT} seconds')})
                 raise Exception(
                     f"Failed to resolve gateway macs after {MAC_RESOLUTION_TIMEOUT} seconds"
                 )
@@ -2201,7 +2364,8 @@ class KCCB:
                 self._precheckSetupTasks['ARP Gateways'].update({'result': 'Failed'})
             else:
                 self._precheckSetupTasks['ARP Gateways'].update({'result': 'Failed',
-                                                                'errorMsg': self.wrapText(f'Failed to resolve gateway Mac after {MAC_RESOLUTION_TIMEOUT} seconds')})
+                                                                 'msg': self.wrapText(f'Failed to resolve gateway Mac after {MAC_RESOLUTION_TIMEOUT} seconds',
+                                                                                      width=300)})
                 raise Exception('ARP gateways failed')
 
 
@@ -3239,7 +3403,7 @@ class KCCB:
             if totalFramesTx != totalFramesRx:
                 errorMsg = f'PFC Incast: TxFrames:{totalFramesTx}  !=  RxFrames:{totalFramesRx}'
                 self._precheckSetupTasks['PFC Incast'].update({'result': 'Failed',
-                                                               'errorMsg': self.wrapText(errorMsg, width=300)})
+                                                               'msg': self.wrapText(errorMsg, width=300)})
             else:
                 self._logger.info(f'PFC Incast: No drop packets')
                 self._precheckSetupTasks['PFC Incast'].update({'result': 'Passed'})
@@ -3411,13 +3575,13 @@ class KCCB:
                 if host.name == hostName and host.incast == 'tx':
                     self._logger.info(f'Port:{hostName}  TxFrames:{framesTx}  PFC_Rx:{framesPfc}')
                     if int(framesPfc) < expectedMinimumPFC:
-                        errorMsg += f'Incast PFC: {host.name} Tx port recieved less than minimum PFC frames:{expectedMinimumPFC}. Received:{framesPfc}.\n'
+                        errorMsg += f"Incast PFC: {host.name} TxPort Rx'd less than minimum PFC frames:{expectedMinimumPFC}. Received: {framesPfc}.\n"
                         self._logger.error(errorMsg)
                         result = 'failed'
 
         if result == 'failed':
             self._precheckSetupTasks['PFC Incast'].update({'result': 'Failed',
-                                                           'errorMsg': self.wrapText(errorMsg, width=300)})
+                                                           'msg': self.wrapText(errorMsg, width=300)})
 
 #
 # Shut down cleanly on Ctrl-C.

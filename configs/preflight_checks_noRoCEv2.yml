@@ -8,16 +8,21 @@ prechecks:
    configure_interfaces: true
    arp_gateways: true
    ping_mesh: true
-   apply_rocev2_traffic: true
-   # Set pfc_incast = false if you don't need to configure/send rocev2 traffic
-   pfc_incast: false
+  #  apply_rocev2_traffic: false
+  #  # Set pfc_incast = false if you don't need to configure/send rocev2 traffic
+  #  pfc_incast: false
 
 chassis:
   chassis_chain: [10.36.75.23]
   primary_chassis_ip: 10.36.75.23
+  enable_roce_port_mode: false
 
   # port_mode options: nrz | pam4
   port_mode: pam4
+
+  # serdesType is only for chassis type: 800GE-8P-QDD-M+ROCEV2 
+  # User must state either 53G/56G or 106G/112G
+  serdesType: 53G
 
 layer1_profiles:
   - name: layer1
@@ -29,9 +34,6 @@ layer1_profiles:
 
 test_profiles:
   - name: RoCEv2-Preflight-Checks
-    # all_to_all | incast
-    # typeOfTest: incast
-    # enableDcqcn: false
     ethernet_mtu:  8192
 
 tests:
@@ -43,35 +45,25 @@ hosts:
   gateway: 71.1.1.1
   prefix: 24
   location: 10.36.75.23/1
-  # incast: tx
-  # rocev2:
-  #   - remoteEndpoint: Host0.4
 
 - name: Host0.2
   address: 71.2.1.2
   gateway: 71.2.1.1
   prefix: 24
   location: 10.36.75.23/2
-  # incast: tx
-  # rocev2:
-  #   - remoteEndpoint: Host0.4
 
 - name: Host0.3
   address: 71.3.1.2
   gateway: 71.3.1.1
   prefix: 24
   location: 10.36.75.23/3
-  # incast: tx
-  # rocev2:
-  #   - remoteEndpoint: Host0.4
 
 - name: Host0.4
   address: 71.4.1.2
   gateway: 71.4.1.1
   location: 10.36.75.23/4
   prefix: 24
-  # incast: rx
-  # rocev2: []
+
 
 
 
