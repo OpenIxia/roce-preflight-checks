@@ -66,7 +66,7 @@ except:
 #    - Check typeOfTest.  If it's all_to_all and pfc_incast precheck is enabled, abort the script with error.
 #    - Close the test session if passed
 #    - Added Yaml config param serdesType for M chassis type
-VERSION="1.0.6"
+VERSION="1.0.7"
 
 
 class ConnectSSH:
@@ -180,6 +180,7 @@ class KCCB:
 
             self._connect()
             self._verifyLicenses()
+
             if self._args.no_reset_ports is False:
                 self._setup_ports()
 
